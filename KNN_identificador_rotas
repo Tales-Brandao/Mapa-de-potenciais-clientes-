@@ -1,1 +1,43 @@
 
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+# Definindo um limite de similaridade
+SIMILARITY_THRESHOLD = 0.85
+
+# Vetorização usando TF-IDF para converter os endereços em vetores
+vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(2, 3))  # Utilizando n-grams de caracteres para melhor captura de similaridade
+tfidf_matrix_local = vectorizer.fit_transform(merged_df['LOCAL'])
+tfidf_matrix_endereco = vectorizer.transform(merged_df['ENDERECO'])
+
+# Lista para armazenar os resultados
+matches = []
+
+# Iterar sobre cada linha do DataFrame
+for idx in range(len(merged_df)):
+    # Obter os vetores TF-IDF dos endereços
+    vector_local = tfidf_matrix_local[idx]
+    vector_endereco = tfidf_matrix_endereco[idx]
+
+    # Calcular a similaridade cosseno entre LOCAL e ENDERECO da mesma linha
+    similarity = cosine_similarity(vector_local, vector_endereco)[0][0]
+
+    # Checar se a similaridade é maior que o limiar definido
+    if similarity >= SIMILARITY_THRESHOLD:
+        # Armazenar o índice e a similaridade
+        matches.append((idx, similarity))
+
+# Criar um novo DataFrame resultante com as linhas que têm alta similaridade
+merged1_df = pd.DataFrame()
+
+for idx, similarity in matches:
+    # Copiar a linha do merged_df para o novo DataFrame, adicionando a similaridade
+    combined_row = merged_df.iloc[idx].copy()
+    combined_row['Similaridade'] = similarity
+    
+    # Adiciona a linha combinada ao DataFrame
+    merged1_df = pd.concat([merged1_df, pd.DataFrame([combined_row])], ignore_index=True)
+
+# Visualizar o DataFrame final
+print(merged1_df)
