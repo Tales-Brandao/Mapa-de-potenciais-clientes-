@@ -1,1 +1,85 @@
+import pandas as pd
+import folium
+import numpy as np
+
+# Função para adicionar cores nominais baseadas em valores únicos de uma coluna
+def add_nominal_colors(df, column_name):
+    # Substituir NaN por 0 na coluna especificada
+    df[column_name].fillna(0, inplace=True)
+    
+    # Obter valores únicos da coluna especificada
+    unique_values = df[column_name].unique()
+    
+    # Definir uma lista de cores nominais
+    color_list = [
+        'red', 'blue', 'green', 'purple', 'orange', 'darkred', 'lightred', 'beige', 
+        'darkblue', 'darkgreen', 'cadetblue', 'darkpurple', 'white', 'pink', 'lightblue',
+        'lightgreen', 'gray', 'black', 'lightgray'
+    ]
+    
+    # Garantir que há cores suficientes para valores únicos
+    if len(unique_values) > len(color_list):
+        raise ValueError("Número de valores únicos excede o número de cores disponíveis.")
+    
+    # Criar um dicionário para mapear cada valor único para uma cor nominal
+    color_map = {value: color_list[i] for i, value in enumerate(unique_values)}
+    
+    # Função auxiliar para obter a cor de um valor
+    def get_color(value):
+        return color_map.get(value, 'black')  # Retorna 'black' para valores não mapeados
+    
+    # Adicionar uma nova coluna com as cores correspondentes
+    df['COLOR'] = df[column_name].apply(get_color)
+    
+    return df
+
+# Função para mapear diferentes valores para diferentes ícones
+def get_icon(value):
+    icon_map = {
+        rota 1: 'cloud',
+        rota 2: 'info-sign',
+        rota 3: 'ok-sign',
+        rota 4: 'remove-sign',
+        rota 5: 'shopping-cart',
+        rota 6: 'star',
+        0: 'question-sign'  # Ícone para NaN substituídos por 0
+    }
+    return icon_map.get(value, 'question-sign')  # Retorna 'question-sign' se o valor não estiver mapeado
+
+# Carregar o DataFrame com as colunas necessárias
+df = pd.read_csv('seu_arquivo.csv')
+
+# Converter colunas de latitude e longitude para float
+df['LATITUDE'] = df['LATITUDE'].astype(float)
+df['LONGITUDE'] = df['LONGITUDE'].astype(float)
+
+# Adicionar cores nominais ao DataFrame
+df_with_colors = add_nominal_colors(df, 'ROTA_PEDIDO')
+
+# Adicionar uma coluna de ícones ao DataFrame
+df_with_colors['ICON'] = df_with_colors['ROTA_PEDIDO'].apply(get_icon)
+
+# Exibir DataFrame com cores e ícones
+print(df_with_colors)
+
+# Exemplo de uso com Folium
+# Criar um mapa com tiles simplificados
+mapa = folium.Map(location=[df_with_colors['LATITUDE'].iloc[0], df_with_colors['LONGITUDE'].iloc[0]], 
+                  zoom_start=10, 
+                  tiles='Stamen Toner Lite',
+                  attr='Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.')
+
+# Adicionar pontos ao mapa com cores e ícones baseados na coluna 'COLOR' e 'ROTA_PEDIDO'
+for index, row in df_with_colors.iterrows():
+    folium.Marker(
+        location=[row['LATITUDE'], row['LONGITUDE']],
+        popup=f"<b>{row['NOME_FANTASIA']}</b><br>{row['ENDERECO']}<br>{row['ROTA_PEDIDO']}<br>",
+        icon=folium.Icon(color=row['COLOR'], icon=row['ICON'], prefix='glyphicon'),
+        tooltip=row['NOME_FANTASIA']
+    ).add_to(mapa)
+
+# Salvar o mapa em um arquivo HTML
+mapa.save("./mapa_interativo_completo.html")
+
+print("Mapa salvo como mapa_interativo_completo.html")
 
