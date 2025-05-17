@@ -1,34 +1,33 @@
-from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
-import time
+import googlemaps
 
-# Inicializa o navegador (você precisa ter o ChromeDriver instalado)
-driver = webdriver.Chrome(executable_path="caminho_para_o_chromedriver.exe")
+# API
+API_KEY = 'YOUR_API_KEY'
 
-# Abre o Google Maps no centro de São Paulo
-url_sao_paulo = "https://www.google.com/maps/place/S%C3%A3o+Paulo,+SP"
-driver.get(url_sao_paulo)
+# Inicialize o cliente da API
+gmaps = googlemaps.Client(key=API_KEY)
 
-# Realiza a busca pela palavra-chave "mercado"
-palavra_chave = "mercado"
-search_box = driver.find_element_by_name("q")
-search_box.send_keys(palavra_chave)
-search_box.send_keys(Keys.RETURN)
+# Realiza uma busca de lugares
+places_result = gmaps.places_nearby(location='-23.550520, -46.633308',  # Coordenadas de São Paulo
+                                    radius=1500,  # Raio de busca em metros
+                                    type='market')  # Tipo de lugar
 
-# Aguarda um tempo para carregar os resultados
-time.sleep(5)
+# Exibe resultados
+for place in places_result['results']:
+    print(f"Nome: {place['name']}")
+    print(f"Endereço: {place.get('vicinity', 'Não disponível')}")
+    print(f"Rating: {place.get('rating', 'Não disponível')}")
+    print("-" * 40)
 
-# Obtém todos os resultados da página atual
-resultados = driver.find_elements_by_css_selector(".section-result-title span")
-for resultado in resultados:
-    print(resultado.text)
-
-# Navega para a próxima página de resultados (se houver)
-try:
-    proxima_pagina = driver.find_element_by_css_selector(".n7lv7yjyC35__button-next-icon")
-    proxima_pagina.click()
-except:
-    print("Não há mais páginas de resultados.")
-
-# Fecha o navegador
-driver.quit()
+# Paginacao para mais resultados
+while 'next_page_token' in places_result:
+    token = places_result['next_page_token']
+    time.sleep(2)  # Aguarda antes de solicitar a próxima página
+    places_result = gmaps.places_nearby(location='-23.550520, -46.633308',
+                                        radius=1500,
+                                        type='market',
+                                        page_token=token)
+    for place in places_result['results']:
+        print(f"Nome: {place['name']}")
+        print(f"Endereço: {place.get('vicinity', 'Não disponível')}")
+        print(f"Rating: {place.get('rating', 'Não disponível')}")
+        print("-" * 40)
