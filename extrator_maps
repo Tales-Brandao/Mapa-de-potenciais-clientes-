@@ -1,4 +1,5 @@
 import googlemaps
+import time
 
 # API
 API_KEY = 'YOUR_API_KEY'
