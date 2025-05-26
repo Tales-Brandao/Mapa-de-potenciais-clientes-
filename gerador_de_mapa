@@ -2,81 +2,99 @@ import numpy as np
 import pandas as pd
 import folium
 
+class DataLoader:
+    """Carrega dados de endereços, rotas e base Google."""
+    def __init__(self, endereco_path, rota_path, google_path):
+        self.endereco_path = endereco_path
+        self.rota_path = rota_path
+        self.google_path = google_path
 
-df_endereco = pd.read_excel(f'./base_endereco.xlsx')
+    def load(self):
+        df_endereco = pd.read_excel(self.endereco_path, dtype={'ID_CNPJ': str})
+        df_rota = pd.read_excel(self.rota_path, dtype={'ID_CNPJ': str})
+        df_google = pd.read_excel(self.google_path)
+        return df_endereco, df_rota, df_google
 
-df_rota = pd.read_excel(f'./rota.xlsx')
+class Preprocessor:
+    """Une e prepara os DataFrames para visualização."""
+    def __init__(self, df_endereco, df_rota):
+        self.df_endereco = df_endereco
+        self.df_rota = df_rota
 
-# %%
-df_endereco['ID_CNPJ'] = df_endereco['ID_CNPJ'].astype(str)
-df_rota['ID_CNPJ'] = df_rota['ID_CNPJ'].astype(str)
+    @staticmethod
+    def add_nominal_colors(df, column_name):
+        df = df.copy()
+        df[column_name].fillna(0, inplace=True)
+        unique_vals = df[column_name].unique()
+        color_list = [
+            'blue','green','purple','orange','beige','white','pink','gray','black',
+            'darkblue','darkgreen','cadetblue','darkpurple','lightblue','lightgreen','lightgray'
+        ]
+        if len(unique_vals) > len(color_list):
+            raise ValueError("Mais valores únicos que cores disponíveis")
+        mapping = dict(zip(unique_vals, color_list))
+        df['COLOR'] = df[column_name].map(mapping).fillna('red')
+        return df
 
+    def run(self):
+        # Merge endereços e rotas
+        df = pd.merge(
+            self.df_endereco,
+            self.df_rota[['ID_CNPJ','ROTA_PEDIDO','NOME_FANTASIA']],
+            on='ID_CNPJ', how='left'
+        ).fillna(0)
+        # Filtra Santo André-SP e nomes válidos
+        df = df[df['ENDERECO'].str.contains('SANTO ANDRÉ-SP', na=False)]
+        df = df[df['NOME_FANTASIA'] != 0]
+        # Icone de mapa
+        df['icon_map'] = np.where(df['ROTA_PEDIDO']==0, 'cloud', 'info-sign')
+        # Local derivado
+        df['LOCAL'] = df['ENDERECO'].str.split(',').str[0].str.replace(' -',',')
+        # Adiciona cores nominais
+        df = self.add_nominal_colors(df, 'ROTA_PEDIDO')
+        return df
 
-df = pd.merge(df_endereco, df_rota[['ROTA_PEDIDO', 'NOME_FANTASIA','ID_CNPJ']], how = 'left', on = ['ID_CNPJ'])
+class MapVisualizer:
+    """Responsável por gerar e salvar o mapa interativo."""
+    def __init__(self, df, output_file):
+        self.df = df
+        self.output_file = output_file
+        # Centro inicial no primeiro ponto
+        lat0, lon0 = self.df[['LATITUDE','LONGITUDE']].iloc[0]
+        self.map = folium.Map(location=[lat0, lon0], zoom_start=12)
 
-df = df.fillna(0)
+    def add_markers(self):
+        for _, row in self.df.iterrows():
+            folium.Marker(
+                location=[row['LATITUDE'], row['LONGITUDE']],
+                icon=folium.Icon(color=row['COLOR'], icon=row['icon_map'], prefix='glyphicon'),
+                popup=f"<b>{row['NOME_FANTASIA']}</b><br>{row['ENDERECO']}<br><b>Rota:</b> {row['ROTA_PEDIDO']}",
+                tooltip=row['NOME_FANTASIA']
+            ).add_to(self.map)
+        return self
 
-df['icon_map'] = np.where(df['ROTA_PEDIDO'] == 0, 'cloud', 'info-sign')
+    def save(self):
+        self.map.save(self.output_file)
+        return self
 
-df = df[df['ENDERECO'].str.contains('SANTO ANDRÉ-SP', na=False)]
+class MappingPipeline:
+    """Orquestra o fluxo completo de carregamento, pré-processamento e visualização."""
+    def __init__(self, endereco_path, rota_path, google_path, output_file):
+        self.loader = DataLoader(endereco_path, rota_path, google_path)
+        self.output_file = output_file
 
-df = df[df['NOME_FANTASIA']!=0]
+    def run(self):
+        df_endereco, df_rota, _ = self.loader.load()
+        df_pre = Preprocessor(df_endereco, df_rota).run()
+        MapVisualizer(df_pre, self.output_file).add_markers().save()
+        print(f"Mapa salvo em {self.output_file}")
 
-# Função para adicionar cores nominais baseadas em valores únicos de uma coluna
-def add_nominal_colors(df, column_name):
-    # Substituir NaN por 0 na coluna especificada
-    df[column_name].fillna(0, inplace=True)
-    
-    # Obter valores únicos da coluna especificada
-    unique_values = df[column_name].unique()
-    
-    # Definir uma lista de cores nominais
-    color_list = [
-        'blue', 'green', 'purple', 'orange', 'beige', 'white', 'pink', 'gray', 'black',
-        'darkblue', 'darkgreen', 'cadetblue', 'darkpurple',  'lightblue',
-        'lightgreen',  'lightgray'
-    ]
-    
-    # Garantir que há cores suficientes para valores únicos
-    if len(unique_values) > len(color_list):
-        raise ValueError("Número de valores únicos excede o número de cores disponíveis.")
-    
-    # Criar um dicionário para mapear cada valor único para uma cor nominal
-    color_map = {value: color_list[i] for i, value in enumerate(unique_values)}
-    
-    # Função auxiliar para obter a cor de um valor
-    def get_color(value):
-        return color_map.get(value, 'red')  # Retorna 'black' para valores não mapeados (não deve ocorrer)
-    
-    # Adicionar uma nova coluna com as cores correspondentes
-    df['COLOR'] = df[column_name].apply(get_color)
-    
-    return df
-
-
-
-# Adicionar cores nominais ao DataFrame
-df_with_colors = add_nominal_colors(df, 'ROTA_PEDIDO')
-
-df_google = pd.read_excel(f'./base_google.xlsx')
-
-df_google['NOME_FANTASIA'] = df_google['DSC_ESTABELECIMENTO']
-
-df0 = pd.merge(df_google, df, how='outer', on = ['NOME_FANTASIA'])
-
-mapa = folium.Map(location=[df['LATITUDE'].iloc[0], df['LONGITUDE'].iloc[0]], zoom_start=10)
-
-
-for index, row in df.iterrows():
-    folium.Marker(
-        location=[row['LATITUDE'], row['LONGITUDE']],
-        icon=folium.Icon(color=row['COLOR'], icon =row['icon_map'] , prefix='glyphicon'),
-        popup=f"<b>{row['NOME_FANTASIA']}</b><br>{row['ENDERECO']}<br></b><br>{row['ROTA_PEDIDO']}<br>",
-        tooltip=row['NOME_FANTASIA']
-    ).add_to(mapa)
-
-
-mapa.save(f"./mapa_interativo_completo.html")
-
-
-
+# Uso
+if __name__ == '__main__':
+    pipeline = MappingPipeline(
+        endereco_path='./base_endereco.xlsx',
+        rota_path='./rota.xlsx',
+        google_path='./base_google.xlsx',
+        output_file='mapa_interativo_V2.html'
+    )
+    pipeline.run()
