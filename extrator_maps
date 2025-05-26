@@ -1,34 +1,164 @@
+# %%
+import numpy as np
+import datetime as md_date
 import googlemaps
+import pandas as pd
 import time
+import folium
+import os
 
-# API
-API_KEY = 'YOUR_API_KEY'
 
-# Inicialize o cliente da API
-gmaps = googlemaps.Client(key=API_KEY)
+gmaps = googlemaps.Client(key='API DO GOOGLE MAPS')
 
-# Realiza uma busca de lugares
-places_result = gmaps.places_nearby(location='-23.550520, -46.633308',  # Coordenadas de São Paulo
-                                    radius=1500,  # Raio de busca em metros
-                                    type='market')  # Tipo de lugar
+v_n = 0
+v_data_hora_ini         = (md_date.datetime.now()-md_date.timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
+v_data_hora_fin         = (md_date.datetime.now()-md_date.timedelta(hours=0)).strftime("%Y-%m-%d %H:%M:%S")
 
-# Exibe resultados
-for place in places_result['results']:
-    print(f"Nome: {place['name']}")
-    print(f"Endereço: {place.get('vicinity', 'Não disponível')}")
-    print(f"Rating: {place.get('rating', 'Não disponível')}")
-    print("-" * 40)
+v_hora_ini     = md_date.datetime.now().strftime("%H:%M:%S")
+v_data_ini_02 = (md_date.date.today()-md_date.timedelta(days=v_n+5)).strftime("%d/%m/%Y")
+v_data_fin_02 = (md_date.date.today()-md_date.timedelta(days=v_n)).strftime("%d/%m/%Y")
 
-# Paginacao para mais resultados
-while 'next_page_token' in places_result:
-    token = places_result['next_page_token']
-    time.sleep(2)  # Aguarda antes de solicitar a próxima página
-    places_result = gmaps.places_nearby(location='-23.550520, -46.633308',
-                                        radius=1500,
-                                        type='market',
-                                        page_token=token)
-    for place in places_result['results']:
-        print(f"Nome: {place['name']}")
-        print(f"Endereço: {place.get('vicinity', 'Não disponível')}")
-        print(f"Rating: {place.get('rating', 'Não disponível')}")
-        print("-" * 40)
+
+
+# %%
+
+#coordenadas de Santo André - SP
+coordenadas = [
+    (-23.64315,-46.53820),
+    (-23.73107,-46.49626),
+    (-23.66483,-46.56909),
+    (-23.64021,-46.51978)
+]
+
+
+min_lat = min(coord[0] for coord in coordenadas)
+max_lat = max(coord[0] for coord in coordenadas)
+min_lon = min(coord[1] for coord in coordenadas)
+max_lon = max(coord[1] for coord in coordenadas)
+
+
+lat_valor = np.arange(min_lat, max_lat, 0.01)
+lon_valor = np.arange(min_lon, max_lon, 0.01)
+
+resultados = []
+
+
+def search_places(query, location, radius=1000, page_token=None):
+    return gmaps.places(query, location=location, radius=radius, page_token=page_token)
+
+
+for lat in lat_valor:
+    for lon in lon_valor:
+        page_token = None
+
+
+        while True:
+            result = search_places('mercado|mercadinho|mercearia|hipermercado|conveniencia|padaria|panificadora|lanchonete|lanches', (lat, lon), page_token=page_token)
+            resultados.extend(result['results'])
+
+            if 'next_page_token' in result:
+                page_token = result['next_page_token']
+                time.sleep(10)
+            else:
+                break
+
+df = pd.DataFrame(resultados)
+
+df = df[['name', 'formatted_address', 'geometry', 'types', 'user_ratings_total', 'rating', 'place_id']]
+
+
+df.columns = ['title', 'address', 'gps_coordinates', 'type', 'reviews', 'rating', 'place_id']
+
+df['link'] = 'https://www.google.com/maps/place/?q=place_id:' + df['place_id']
+
+df['latitude'] = df['gps_coordinates'].apply(lambda x: x['location']['lat'])
+df['longitude'] = df['gps_coordinates'].apply(lambda x: x['location']['lng'])
+
+
+def get_place_details(place_id):
+
+    place_details = gmaps.place(place_id, fields=['formatted_phone_number'])
+
+    if 'formatted_phone_number' in place_details['result']:
+        return place_details['result']['formatted_phone_number']
+    else:
+        return None
+    
+    
+
+df['telefone'] = df['place_id'].apply(get_place_details)
+
+
+df.rename(columns={'title': 'TITULO', 'address': 'ENDERECO','type':'TIPO','telefone':'TELEFONE', 'reviews':'NUMERO_AVALIACOES',
+                    'rating':'NOTA','place_id':'ID_LOCAL_GOOGLE','link':'LINK','latitude':'LATITUDE', 'longitude':'LONGITUDE'}, inplace=True)
+
+
+df2 = df.drop(columns=['gps_coordinates', 'TIPO'])
+
+mapa = folium.Map(location=[df2['LATITUDE'].iloc[0], df2['LONGITUDE'].iloc[0]], zoom_start=10)
+
+for index, row in df2.iterrows():
+    folium.Marker(
+        location=[row['LATITUDE'], row['LONGITUDE']],
+        popup=f"<b>{row['TITULO']}</b><br>{row['ENDERECO']}<br><a href='{row['LINK']}'>Link</a>",
+        tooltip=row['TITULO']
+    ).add_to(mapa)
+
+
+mapa.save(f"{os.getcwd()}/mapa_interativo.html")
+
+#CÓDIGO DE EXTRAÇÃO DO SERPAPI
+#FAZ A MESMA COISA DO GOOGLE MAS POR OUTRA API
+
+"""#API SERPAPI
+
+# Função para fazer a busca e retornar os resultados locais
+def teste(loop):
+    params = {
+        "engine": "google_maps",
+        "q": "mercado | mercearia",
+        "ll": "@-23.6639,-46.5383, 10z",  # coordenadas de santo andré - sp
+        "type": "search",
+        "start": loop,
+        "api_key": "a55ae2a646f7882df9fc02f8608af4b971ac44d46cbd44e6e7cee748048d5512"
+    }
+    response = requests.get("https://serpapi.com/search", params=params)
+    results = response.json()
+    local_results = results.get("local_results", [])
+    print(local_results)
+    return local_results
+
+# Lista para armazenar todos os resultados
+all_local_results = []
+# Executa a função em um loop de 20 em 20 até que não haja mais resultados
+loop = 0
+while True:
+    local_results = teste(loop)
+    if not local_results:
+        break
+    all_local_results.extend(local_results)
+    loop += 20
+
+# Converte a lista de resultados para um DataFrame
+df = pd.DataFrame(all_local_results)
+
+# Verifica as colunas presentes no DataFrame
+print(df)
+
+
+
+# Seleciona apenas as colunas que existem no DataFrame
+columns_to_select = ['title', 'address',  'gps_coordinates', 'type', 'phone', 'reviews', 'rating',
+                     'place_id', 'reviews_link', 'photos_link']
+existing_columns = [col for col in columns_to_select if col in df.columns]
+
+# Cria o DataFrame final apenas com as colunas existentes
+df1 = df[existing_columns]
+
+
+df1['link'] = 'https://www.google.com/maps/place/?q=place_id:' + df1['place_id']
+
+df1['latitude'] = df1['gps_coordinates'].apply(lambda x: x['latitude'])
+df1['longitude'] = df1['gps_coordinates'].apply(lambda x: x['longitude'])"""
+
+# %%
