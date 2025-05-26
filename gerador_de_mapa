@@ -1,6 +1,26 @@
+import numpy as np
 import pandas as pd
 import folium
-import numpy as np
+
+
+df_endereco = pd.read_excel(f'./base_endereco.xlsx')
+
+df_rota = pd.read_excel(f'./rota.xlsx')
+
+# %%
+df_endereco['ID_CNPJ'] = df_endereco['ID_CNPJ'].astype(str)
+df_rota['ID_CNPJ'] = df_rota['ID_CNPJ'].astype(str)
+
+
+df = pd.merge(df_endereco, df_rota[['ROTA_PEDIDO', 'NOME_FANTASIA','ID_CNPJ']], how = 'left', on = ['ID_CNPJ'])
+
+df = df.fillna(0)
+
+df['icon_map'] = np.where(df['ROTA_PEDIDO'] == 0, 'cloud', 'info-sign')
+
+df = df[df['ENDERECO'].str.contains('SANTO ANDRÉ-SP', na=False)]
+
+df = df[df['NOME_FANTASIA']!=0]
 
 # Função para adicionar cores nominais baseadas em valores únicos de uma coluna
 def add_nominal_colors(df, column_name):
@@ -12,9 +32,9 @@ def add_nominal_colors(df, column_name):
     
     # Definir uma lista de cores nominais
     color_list = [
-        'red', 'blue', 'green', 'purple', 'orange', 'darkred', 'lightred', 'beige', 
-        'darkblue', 'darkgreen', 'cadetblue', 'darkpurple', 'white', 'pink', 'lightblue',
-        'lightgreen', 'gray', 'black', 'lightgray'
+        'blue', 'green', 'purple', 'orange', 'beige', 'white', 'pink', 'gray', 'black',
+        'darkblue', 'darkgreen', 'cadetblue', 'darkpurple',  'lightblue',
+        'lightgreen',  'lightgray'
     ]
     
     # Garantir que há cores suficientes para valores únicos
@@ -26,59 +46,37 @@ def add_nominal_colors(df, column_name):
     
     # Função auxiliar para obter a cor de um valor
     def get_color(value):
-        return color_map.get(value, 'black')  # Retorna 'black' para valores não mapeados
+        return color_map.get(value, 'red')  # Retorna 'black' para valores não mapeados (não deve ocorrer)
     
     # Adicionar uma nova coluna com as cores correspondentes
     df['COLOR'] = df[column_name].apply(get_color)
     
     return df
 
-# Função para mapear diferentes valores para diferentes ícones
-def get_icon(value):
-    icon_map = {
-        rota 1: 'cloud',
-        rota 2: 'info-sign',
-        rota 3: 'ok-sign',
-        rota 4: 'remove-sign',
-        rota 5: 'shopping-cart',
-        rota 6: 'star',
-        0: 'question-sign'  # Ícone para NaN substituídos por 0
-    }
-    return icon_map.get(value, 'question-sign')  # Retorna 'question-sign' se o valor não estiver mapeado
 
-# Carregar o DataFrame com as colunas necessárias
-df = pd.read_csv('seu_arquivo.csv')
-
-# Converter colunas de latitude e longitude para float
-df['LATITUDE'] = df['LATITUDE'].astype(float)
-df['LONGITUDE'] = df['LONGITUDE'].astype(float)
 
 # Adicionar cores nominais ao DataFrame
 df_with_colors = add_nominal_colors(df, 'ROTA_PEDIDO')
 
-# Adicionar uma coluna de ícones ao DataFrame
-df_with_colors['ICON'] = df_with_colors['ROTA_PEDIDO'].apply(get_icon)
+df_google = pd.read_excel(f'./base_google.xlsx')
 
-# Exibir DataFrame com cores e ícones
-print(df_with_colors)
+df_google['NOME_FANTASIA'] = df_google['DSC_ESTABELECIMENTO']
 
-# Exemplo de uso com Folium
-# Criar um mapa com tiles simplificados
-mapa = folium.Map(location=[df_with_colors['LATITUDE'].iloc[0], df_with_colors['LONGITUDE'].iloc[0]], 
-                  zoom_start=10, 
-                  tiles='Stamen Toner Lite',
-                  attr='Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.')
+df0 = pd.merge(df_google, df, how='outer', on = ['NOME_FANTASIA'])
 
-# Adicionar pontos ao mapa com cores e ícones baseados na coluna 'COLOR' e 'ROTA_PEDIDO'
-for index, row in df_with_colors.iterrows():
+mapa = folium.Map(location=[df['LATITUDE'].iloc[0], df['LONGITUDE'].iloc[0]], zoom_start=10)
+
+
+for index, row in df.iterrows():
     folium.Marker(
         location=[row['LATITUDE'], row['LONGITUDE']],
-        popup=f"<b>{row['NOME_FANTASIA']}</b><br>{row['ENDERECO']}<br>{row['ROTA_PEDIDO']}<br>",
-        icon=folium.Icon(color=row['COLOR'], icon=row['ICON'], prefix='glyphicon'),
+        icon=folium.Icon(color=row['COLOR'], icon =row['icon_map'] , prefix='glyphicon'),
+        popup=f"<b>{row['NOME_FANTASIA']}</b><br>{row['ENDERECO']}<br></b><br>{row['ROTA_PEDIDO']}<br>",
         tooltip=row['NOME_FANTASIA']
     ).add_to(mapa)
 
-# Salvar o mapa em um arquivo HTML
-mapa.save("./mapa_interativo_completo.html")
 
-print("Mapa salvo como mapa_interativo_completo.html")
+mapa.save(f"./mapa_interativo_completo.html")
+
+
+
