@@ -1,149 +1,118 @@
-import numpy as np
-import googlemaps
-import pandas as pd
-import time
-import folium
 import os
+import time
+import numpy as np
+import pandas as pd
+import folium
+import googlemaps
 
 
-gmaps = googlemaps.Client(key='API DO GOOGLE MAPS')
+class GoogleMapsLoader:
+    """Inicializa o cliente GoogleMaps."""
+    def __init__(self, api_key: str):
+        self.client = googlemaps.Client(key=api_key)
 
 
-#coordenadas de Santo André - SP
-coordenadas = [
-    (-23.64315,-46.53820),
-    (-23.73107,-46.49626),
-    (-23.66483,-46.56909),
-    (-23.64021,-46.51978)
-]
+class PlacesSearcher:
+    """Busca lugares dentro da área definida por grid de coordenadas."""
+    def __init__(self, gmaps_client, queries: list, radius: int = 1000):
+        self.gmaps = gmaps_client
+        self.queries = queries
+        self.radius = radius
+
+    def _search_page(self, query, location, page_token=None):
+        return self.gmaps.places(query=query,
+                                 location=location,
+                                 radius=self.radius,
+                                 page_token=page_token)
+
+    def search_grid(self, lat_vals, lon_vals):
+        results = []
+        for lat in lat_vals:
+            for lon in lon_vals:
+                page_token = None
+                while True:
+                    response = self._search_page('|'.join(self.queries), (lat, lon), page_token)
+                    results.extend(response.get('results', []))
+                    next_token = response.get('next_page_token')
+                    if not next_token:
+                        break
+                    page_token = next_token
+                    time.sleep(2)  # aguarda o token
+        return results
 
 
-min_lat = min(coord[0] for coord in coordenadas)
-max_lat = max(coord[0] for coord in coordenadas)
-min_lon = min(coord[1] for coord in coordenadas)
-max_lon = max(coord[1] for coord in coordenadas)
+class DataFormatter:
+    """Formata e enriquece o DataFrame de resultados."""
+    def __init__(self, raw_results: list, gmaps_client):
+        self.raw = raw_results
+        self.gmaps = gmaps_client
+
+    def to_dataframe(self):
+        df = pd.DataFrame(self.raw)
+        df = df[['name','formatted_address','geometry','types','user_ratings_total','rating','place_id']]
+        df.columns = ['title','address','gps','types','reviews','rating','place_id']
+        df['link'] = 'https://www.google.com/maps/place/?q=place_id:' + df['place_id']
+        df['LATITUDE'] = df['gps'].apply(lambda x: x['location']['lat'])
+        df['LONGITUDE'] = df['gps'].apply(lambda x: x['location']['lng'])
+        df['telephone'] = df['place_id'].apply(self._fetch_phone)
+        return df.drop(columns=['gps','types'])
+
+    def _fetch_phone(self, place_id: str):
+        detail = self.gmaps.place(place_id, fields=['formatted_phone_number'])
+        return detail.get('result', {}).get('formatted_phone_number')
 
 
-lat_valor = np.arange(min_lat, max_lat, 0.01)
-lon_valor = np.arange(min_lon, max_lon, 0.01)
+class MapVisualizer:
+    """Gera mapa Folium a partir do DataFrame formatado."""
+    def __init__(self, df: pd.DataFrame, output_path: str, zoom_start: int = 12):
+        self.df = df
+        self.output = output_path
+        first = df[['LATITUDE','LONGITUDE']].iloc[0]
+        self.map = folium.Map(location=[first.LATITUDE, first.LONGITUDE], zoom_start=zoom_start)
 
-resultados = []
+    def add_markers(self):
+        for _, row in self.df.iterrows():
+            folium.Marker(
+                location=[row.LATITUDE, row.LONGITUDE],
+                popup=(f"<b>{row.title}</b><br>{row.address}" \
+                       f"<br><a href='{row.link}'>Abrir no Google Maps</a>"),
+                tooltip=row.title
+            ).add_to(self.map)
+        return self
 
-
-def search_places(query, location, radius=1000, page_token=None):
-    return gmaps.places(query, location=location, radius=radius, page_token=page_token)
-
-
-for lat in lat_valor:
-    for lon in lon_valor:
-        page_token = None
-
-
-        while True:
-            result = search_places('mercado|mercadinho|mercearia|hipermercado|conveniencia|padaria|panificadora|lanchonete|lanches', (lat, lon), page_token=page_token)
-            resultados.extend(result['results'])
-
-            if 'next_page_token' in result:
-                page_token = result['next_page_token']
-                time.sleep(10)
-            else:
-                break
-
-df = pd.DataFrame(resultados)
-
-df = df[['name', 'formatted_address', 'geometry', 'types', 'user_ratings_total', 'rating', 'place_id']]
+    def save(self):
+        self.map.save(self.output)
+        return self
 
 
-df.columns = ['title', 'address', 'gps_coordinates', 'type', 'reviews', 'rating', 'place_id']
+class PlacesPipeline:
+    """Orquestra as etapas de busca, formatação e visualização."""
+    def __init__(self, api_key, area_coords, step=0.01):
+        self.loader = GoogleMapsLoader(api_key)
+        self.area = area_coords
+        self.step = step
 
-df['link'] = 'https://www.google.com/maps/place/?q=place_id:' + df['place_id']
+    def run(self, output_file):
+        lats = np.arange(min(c[0] for c in self.area), max(c[0] for c in self.area), self.step)
+        lons = np.arange(min(c[1] for c in self.area), max(c[1] for c in self.area), self.step)
 
-df['latitude'] = df['gps_coordinates'].apply(lambda x: x['location']['lat'])
-df['longitude'] = df['gps_coordinates'].apply(lambda x: x['location']['lng'])
+        queries = [
+            'mercado','mercadinho','mercearia','hipermercado',
+            'conveniencia','padaria','panificadora','lanchonete','lanches'
+        ]
 
-
-def get_place_details(place_id):
-
-    place_details = gmaps.place(place_id, fields=['formatted_phone_number'])
-
-    if 'formatted_phone_number' in place_details['result']:
-        return place_details['result']['formatted_phone_number']
-    else:
-        return None
-    
-    
-
-df['telefone'] = df['place_id'].apply(get_place_details)
-
-
-df.rename(columns={'title': 'TITULO', 'address': 'ENDERECO','type':'TIPO','telefone':'TELEFONE', 'reviews':'NUMERO_AVALIACOES',
-                    'rating':'NOTA','place_id':'ID_LOCAL_GOOGLE','link':'LINK','latitude':'LATITUDE', 'longitude':'LONGITUDE'}, inplace=True)
-
-
-df2 = df.drop(columns=['gps_coordinates', 'TIPO'])
-
-mapa = folium.Map(location=[df2['LATITUDE'].iloc[0], df2['LONGITUDE'].iloc[0]], zoom_start=10)
-
-for index, row in df2.iterrows():
-    folium.Marker(
-        location=[row['LATITUDE'], row['LONGITUDE']],
-        popup=f"<b>{row['TITULO']}</b><br>{row['ENDERECO']}<br><a href='{row['LINK']}'>Link</a>",
-        tooltip=row['TITULO']
-    ).add_to(mapa)
+        # 1) Busca
+        results = PlacesSearcher(self.loader.client, queries).search_grid(lats, lons)
+        # 2) Formata
+        df = DataFormatter(results, self.loader.client).to_dataframe()
+        # 3) Visualiza
+        MapVisualizer(df, output_file).add_markers().save()
+        print(f"Mapa gerado em: {output_file}")
 
 
-mapa.save(f"{os.getcwd()}/mapa_interativo.html")
-
-# CÓDIGO DE EXTRAÇÃO DO SERPAPI
-# FAZ A MESMA COISA DO GOOGLE MAS POR OUTRA API
-
-# API SERPAPI
-
-# Função para fazer a busca e retornar os resultados locais
-# def teste(loop):
-#     params = {
-#         "engine": "google_maps",
-#         "q": "mercado | mercearia",
-#         "ll": "@-23.6639,-46.5383, 10z",  # coordenadas de santo andré - sp
-#         "type": "search",
-#         "start": loop,
-#         "api_key": "a55ae2a646f7882df9fc02f8608af4b971ac44d46cbd44e6e7cee748048d5512"
-#     }
-#     response = requests.get("https://serpapi.com/search", params=params)
-#     results = response.json()
-#     local_results = results.get("local_results", [])
-#     print(local_results)
-#     return local_results
-
-# Lista para armazenar todos os resultados
-# all_local_results = []
-# Executa a função em um loop de 20 em 20 até que não haja mais resultados
-# loop = 0
-# while True:
-#     local_results = teste(loop)
-#     if not local_results:
-#         break
-#     all_local_results.extend(local_results)
-#     loop += 20
-
-# Converte a lista de resultados para um DataFrame
-# df = pd.DataFrame(all_local_results)
-
-# Verifica as colunas presentes no DataFrame
-# print(df)
-
-
-
-# Seleciona apenas as colunas que existem no DataFrame
-# columns_to_select = ['title', 'address',  'gps_coordinates', 'type', 'phone', 'reviews', 'rating',
-#                      'place_id', 'reviews_link', 'photos_link']
-# existing_columns = [col for col in columns_to_select if col in df.columns]
-
-# Cria o DataFrame final apenas com as colunas existentes
-# df1 = df[existing_columns]
-
-
-# df1['link'] = 'https://www.google.com/maps/place/?q=place_id:' + df1['place_id']
-
-# df1['latitude'] = df1['gps_coordinates'].apply(lambda x: x['latitude'])
-# df1['longitude'] = df1['gps_coordinates'].apply(lambda x: x['longitude']) 
+if __name__ == '__main__':
+    area_coords = [(-23.64315,-46.53820),(-23.73107,-46.49626),
+                   (-23.66483,-46.56909),(-23.64021,-46.51978)]
+    pipeline = PlacesPipeline(api_key=os.getenv('GMAPS_KEY','YOUR_KEY'),
+                               area_coords=area_coords)
+    pipeline.run(output_file=os.path.join(os.getcwd(),'mapa_interativo.html'))
