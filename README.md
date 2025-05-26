@@ -27,10 +27,3 @@ Constrói um DataFrame com:
 title, address, reviews, rating, place_id, link, LATITUDE, LONGITUDE, telephone
 Gera um mapa Folium marcando cada ponto, com popup e link direto ao Google Maps.
 
-/
-├─ base_endereco.xlsx        # Planilha com endereços e CNPJs
-├─ rota.xlsx                 # Planilha com roteiros e CNPJs
-├─ base_google.xlsx          # Planilha de estabelecimentos do Google
-├─ routing_pipeline.py       # Implementação do RoutingPipeline
-├─ places_pipeline.py        # Implementação do PlacesPipeline
-└─ README.md                 # Este arquivo
