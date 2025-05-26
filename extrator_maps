@@ -1,6 +1,4 @@
-# %%
 import numpy as np
-import datetime as md_date
 import googlemaps
 import pandas as pd
 import time
@@ -10,17 +8,6 @@ import os
 
 gmaps = googlemaps.Client(key='API DO GOOGLE MAPS')
 
-v_n = 0
-v_data_hora_ini         = (md_date.datetime.now()-md_date.timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
-v_data_hora_fin         = (md_date.datetime.now()-md_date.timedelta(hours=0)).strftime("%Y-%m-%d %H:%M:%S")
-
-v_hora_ini     = md_date.datetime.now().strftime("%H:%M:%S")
-v_data_ini_02 = (md_date.date.today()-md_date.timedelta(days=v_n+5)).strftime("%d/%m/%Y")
-v_data_fin_02 = (md_date.date.today()-md_date.timedelta(days=v_n)).strftime("%d/%m/%Y")
-
-
-
-# %%
 
 #coordenadas de Santo André - SP
 coordenadas = [
@@ -107,58 +94,56 @@ for index, row in df2.iterrows():
 
 mapa.save(f"{os.getcwd()}/mapa_interativo.html")
 
-#CÓDIGO DE EXTRAÇÃO DO SERPAPI
-#FAZ A MESMA COISA DO GOOGLE MAS POR OUTRA API
+# CÓDIGO DE EXTRAÇÃO DO SERPAPI
+# FAZ A MESMA COISA DO GOOGLE MAS POR OUTRA API
 
-"""#API SERPAPI
+# API SERPAPI
 
 # Função para fazer a busca e retornar os resultados locais
-def teste(loop):
-    params = {
-        "engine": "google_maps",
-        "q": "mercado | mercearia",
-        "ll": "@-23.6639,-46.5383, 10z",  # coordenadas de santo andré - sp
-        "type": "search",
-        "start": loop,
-        "api_key": "a55ae2a646f7882df9fc02f8608af4b971ac44d46cbd44e6e7cee748048d5512"
-    }
-    response = requests.get("https://serpapi.com/search", params=params)
-    results = response.json()
-    local_results = results.get("local_results", [])
-    print(local_results)
-    return local_results
+# def teste(loop):
+#     params = {
+#         "engine": "google_maps",
+#         "q": "mercado | mercearia",
+#         "ll": "@-23.6639,-46.5383, 10z",  # coordenadas de santo andré - sp
+#         "type": "search",
+#         "start": loop,
+#         "api_key": "a55ae2a646f7882df9fc02f8608af4b971ac44d46cbd44e6e7cee748048d5512"
+#     }
+#     response = requests.get("https://serpapi.com/search", params=params)
+#     results = response.json()
+#     local_results = results.get("local_results", [])
+#     print(local_results)
+#     return local_results
 
 # Lista para armazenar todos os resultados
-all_local_results = []
+# all_local_results = []
 # Executa a função em um loop de 20 em 20 até que não haja mais resultados
-loop = 0
-while True:
-    local_results = teste(loop)
-    if not local_results:
-        break
-    all_local_results.extend(local_results)
-    loop += 20
+# loop = 0
+# while True:
+#     local_results = teste(loop)
+#     if not local_results:
+#         break
+#     all_local_results.extend(local_results)
+#     loop += 20
 
 # Converte a lista de resultados para um DataFrame
-df = pd.DataFrame(all_local_results)
+# df = pd.DataFrame(all_local_results)
 
 # Verifica as colunas presentes no DataFrame
-print(df)
+# print(df)
 
 
 
 # Seleciona apenas as colunas que existem no DataFrame
-columns_to_select = ['title', 'address',  'gps_coordinates', 'type', 'phone', 'reviews', 'rating',
-                     'place_id', 'reviews_link', 'photos_link']
-existing_columns = [col for col in columns_to_select if col in df.columns]
+# columns_to_select = ['title', 'address',  'gps_coordinates', 'type', 'phone', 'reviews', 'rating',
+#                      'place_id', 'reviews_link', 'photos_link']
+# existing_columns = [col for col in columns_to_select if col in df.columns]
 
 # Cria o DataFrame final apenas com as colunas existentes
-df1 = df[existing_columns]
+# df1 = df[existing_columns]
 
 
-df1['link'] = 'https://www.google.com/maps/place/?q=place_id:' + df1['place_id']
+# df1['link'] = 'https://www.google.com/maps/place/?q=place_id:' + df1['place_id']
 
-df1['latitude'] = df1['gps_coordinates'].apply(lambda x: x['latitude'])
-df1['longitude'] = df1['gps_coordinates'].apply(lambda x: x['longitude'])"""
-
-# %%
+# df1['latitude'] = df1['gps_coordinates'].apply(lambda x: x['latitude'])
+# df1['longitude'] = df1['gps_coordinates'].apply(lambda x: x['longitude']) 
