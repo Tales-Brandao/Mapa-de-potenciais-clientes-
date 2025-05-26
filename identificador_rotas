@@ -1,43 +1,192 @@
-
+import numpy as np
 import pandas as pd
+from geopy.distance import geodesic
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.neighbors import NearestNeighbors
 
-# Definindo um limite de similaridade
-SIMILARITY_THRESHOLD = 0.85
 
-# Vetorização usando TF-IDF para converter os endereços em vetores
-vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(2, 3))  # Utilizando n-grams de caracteres para melhor captura de similaridade
-tfidf_matrix_local = vectorizer.fit_transform(merged_df['LOCAL'])
-tfidf_matrix_endereco = vectorizer.transform(merged_df['ENDERECO'])
+class DataLoader:
+    """Responsável por carregar e formatar as bases Excel."""
+    def __init__(self, endereco_path, rota_path, google_path):
+        self.endereco_path = endereco_path
+        self.rota_path = rota_path
+        self.google_path = google_path
 
-# Lista para armazenar os resultados
-matches = []
+    def load(self):
+        df_endereco = pd.read_excel(self.endereco_path, dtype={'ID_CNPJ': str})
+        df_rota     = pd.read_excel(self.rota_path,   dtype={'ID_CNPJ': str})
+        df_google   = pd.read_excel(self.google_path)
+        return df_endereco, df_rota, df_google
 
-# Iterar sobre cada linha do DataFrame
-for idx in range(len(merged_df)):
-    # Obter os vetores TF-IDF dos endereços
-    vector_local = tfidf_matrix_local[idx]
-    vector_endereco = tfidf_matrix_endereco[idx]
 
-    # Calcular a similaridade cosseno entre LOCAL e ENDERECO da mesma linha
-    similarity = cosine_similarity(vector_local, vector_endereco)[0][0]
+class Preprocessor:
+    """Une, filtra, preenche e adiciona atributos nominais."""
+    def __init__(self, df_endereco, df_rota, df_google):
+        self.df_endereco = df_endereco
+        self.df_rota     = df_rota
+        self.df_google   = df_google
 
-    # Checar se a similaridade é maior que o limiar definido
-    if similarity >= SIMILARITY_THRESHOLD:
-        # Armazenar o índice e a similaridade
-        matches.append((idx, similarity))
+    @staticmethod
+    def add_nominal_colors(df, column):
+        color_list = [
+            'blue','green','purple','orange','beige','white','pink','gray','black',
+            'darkblue','darkgreen','cadetblue','darkpurple','lightblue','lightgreen','lightgray'
+        ]
+        uniques = df[column].fillna(0).unique()
+        if len(uniques) > len(color_list):
+            raise ValueError("cores insuficientes")
+        mapping = dict(zip(uniques, color_list))
+        df['COLOR'] = df[column].map(mapping).fillna('red')
+        return df
 
-# Criar um novo DataFrame resultante com as linhas que têm alta similaridade
-merged1_df = pd.DataFrame()
+    def run(self):
+        # 1) join endereços ↔ rotas
+        df = (
+            self.df_endereco
+            .merge(self.df_rota[['ID_CNPJ','ROTA_PEDIDO','NOME_FANTASIA']],
+                   on='ID_CNPJ', how='left')
+            .fillna(0)
+        )
+        # 2) atributos deriv.
+        df['icon_map'] = np.where(df['ROTA_PEDIDO']==0,'cloud','info-sign')
+        df = df[df['ENDERECO'].str.contains('SANTO ANDRÉ-SP', na=False)]
+        df = df[df['NOME_FANTASIA']!=0]
+        df['LOCAL'] = df['ENDERECO'].str.split(',').str[0].str.replace(' -',',')
+        # 3) cor nominal por rota
+        df = self.add_nominal_colors(df, 'ROTA_PEDIDO')
+        # 4) merge com Google
+        g = self.df_google.copy()
+        g['LOCAL'] = g['LOCAL'].str.replace(r'\s+',' ',regex=True)
+        df = (
+            g.merge(df, on='NOME_FANTASIA', how='outer', suffixes=('_g',''))
+             .assign(
+                ENDERECO=lambda d: d['ENDERECO_g'].fillna(d['ENDERECO']),
+                LATITUDE =lambda d: d['LATITUDE_g'].fillna(d['LATITUDE']),
+                LONGITUDE=lambda d: d['LONGITUDE_g'].fillna(d['LONGITUDE']),
+                LOCAL   =lambda d: d['LOCAL_g'].fillna(d['LOCAL']),
+                COLOR   =lambda d: d['COLOR'].fillna('red'),
+                icon_map=lambda d: d['icon_map'].fillna('cloud'),
+             )
+             .drop(columns=[c for c in d.columns if c.endswith(('_g'))])
+             .fillna('0')
+        )
+        return df
 
-for idx, similarity in matches:
-    # Copiar a linha do merged_df para o novo DataFrame, adicionando a similaridade
-    combined_row = merged_df.iloc[idx].copy()
-    combined_row['Similaridade'] = similarity
-    
-    # Adiciona a linha combinada ao DataFrame
-    merged1_df = pd.concat([merged1_df, pd.DataFrame([combined_row])], ignore_index=True)
 
-# Visualizar o DataFrame final
-print(merged1_df)
+class NameMatcher:
+    """Encontra correspondências fuzzy entre NOME_FANTASIA e DSC_ESTABELECIMENTO."""
+    def __init__(self, df_main, df_google, threshold=0.7):
+        self.df1 = df_main
+        self.df2 = df_google
+        self.threshold = threshold
+
+    def run(self):
+        vec = TfidfVectorizer(analyzer='char', ngram_range=(2,3))
+        m1 = vec.fit_transform(self.df1['NOME_FANTASIA'])
+        m2 = vec.transform(self.df2['DSC_ESTABELECIMENTO'])
+        knn = NearestNeighbors(n_neighbors=1, metric='cosine').fit(m2)
+
+        matches, used1, used2 = [], set(), set()
+        for i, v in enumerate(m1):
+            dist, ind = knn.kneighbors(v)
+            sim = 1 - dist[0][0]
+            if sim >= self.threshold:
+                matches.append((i, ind[0][0], sim))
+                used1.add(i); used2.add(ind[0][0])
+
+        rows = []
+        for i1, i2, sim in matches:
+            a, b = self.df1.iloc[i1], self.df2.iloc[i2]
+            rows.append(dict(
+                NOME_FANTASIA=a['NOME_FANTASIA'], LOCAL=a['LOCAL'],
+                DSC_ESTAB=b['DSC_ESTABELECIMENTO'], LOCAL_2=b['LOCAL'],
+                ENDERECO=b['ENDERECO'], LATITUDE=b['LATITUDE'], LONGITUDE=b['LONGITUDE'],
+                ROTA_PEDIDO=a['ROTA_PEDIDO'], COLOR=a['COLOR'], icon_map=a['icon_map'],
+                Similaridade=sim
+            ))
+        # append não-matches de df1
+        for i in range(len(self.df1)):
+            if i not in used1:
+                a=self.df1.iloc[i]
+                rows.append({**a.to_dict(), **dict(
+                    DSC_ESTAB=a['NOME_FANTASIA'], LOCAL_2=a['LOCAL'],
+                    ENDERECO=a['ENDERECO'], LATITUDE=a['LATITUDE'],
+                    LONGITUDE=a['LONGITUDE'], Similaridade=0
+                )})
+        # append não-matches de df2
+        for j in range(len(self.df2)):
+            if j not in used2:
+                b=self.df2.iloc[j]
+                rows.append(dict(
+                    NOME_FANTASIA=b['DSC_ESTABELECIMENTO'], LOCAL=b['LOCAL'],
+                    DSC_ESTAB=b['DSC_ESTABELECIMENTO'], LOCAL_2=b['LOCAL'],
+                    ENDERECO=b['ENDERECO'], LATITUDE=b['LATITUDE'], LONGITUDE=b['LONGITUDE'],
+                    ROTA_PEDIDO=0, COLOR='red', icon_map='cloud', Similaridade=0
+                ))
+
+        return pd.DataFrame(rows)
+
+
+class GeoUnifier:
+    """Unifica pontos próximos e propaga rotas para red-points."""
+    def __init__(self, df, filter_km=0.03):
+        self.df = df.copy()
+        self.filter_km = filter_km
+
+    def unify(self):
+        df_u = pd.DataFrame(columns=self.df.columns.tolist()+['DISTANCIA'])
+        for _, row in self.df.iterrows():
+            coord = (row.LATITUDE, row.LONGITUDE)
+            merged = False
+            for i, existing in df_u.iterrows():
+                d = geodesic(coord,(existing.LATITUDE,existing.LONGITUDE)).km
+                if d <= self.filter_km:
+                    if row.ROTA_PEDIDO > existing.ROTA_PEDIDO:
+                        row.DISTANCIA=d
+                        df_u.iloc[i] = row
+                    merged=True
+                    break
+            if not merged:
+                row.DISTANCIA=0
+                df_u = pd.concat([df_u, pd.DataFrame([row])], ignore_index=True)
+
+        # Propaga rota a red-points
+        non_red = df_u[df_u.COLOR!='red']
+        out=[]
+        for _, r in df_u.iterrows():
+            if r.COLOR=='red':
+                best=(None,1e9)
+                for _, nr in non_red.iterrows():
+                    d=geodesic((r.LATITUDE,r.LONGITUDE),(nr.LATITUDE,nr.LONGITUDE)).km
+                    if d<best[1]:
+                        best=(nr.ROTA_PEDIDO,d)
+                r.DISTANCIA=best[1]; r.ROTA_PEDIDO=best[0]
+            out.append(r)
+        return pd.DataFrame(out)
+
+
+class RoutingPipeline:
+    def __init__(self, paths):
+        self.loader = DataLoader(*paths)
+        e, r, g = self.loader.load()
+        self.df_pre = Preprocessor(e, r, g).run()
+        self.matched = None
+        self.unified = None
+
+    def run(self):
+        self.matched = NameMatcher(self.df_pre, self.loader.load()[2]).run()
+        self.unified = GeoUnifier(self.matched).unify()
+        # Seleciona colunas finais
+        return self.unified[[
+            'NOME_FANTASIA','ENDERECO','LATITUDE','LONGITUDE',
+            'ROTA_PEDIDO','DISTANCIA'
+        ]].assign(CIDADE='SANTO ANDRE', ESTADO='SP',
+                  CLIENTE=lambda df: np.where(df.COLOR=='red','NAO','SIM')
+        )
+
+# ——— Executa ———
+if __name__=='__main__':
+    paths = ('./enderecos.xlsx','./rotas.xlsx','./base_google.xlsx')
+    pipeline = RoutingPipeline(paths)
+    result_df = pipeline.run()
+
